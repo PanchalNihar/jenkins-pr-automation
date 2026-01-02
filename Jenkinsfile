@@ -199,7 +199,6 @@ pipeline {
                     ### Details:
                     - **Build Number**: #${BUILD_NUMBER}
                     - **Generated**: ${new Date()}
-                    - **Branch**: \`${FEATURE_BRANCH}\`
                     
                     Please review the changes and merge if everything looks good.
                     """
