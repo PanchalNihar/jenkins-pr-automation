@@ -2,30 +2,24 @@ pipeline {
     agent any
     
     environment {
-        // GitHub configuration
         GITHUB_TOKEN = credentials('github-token')
-        REPO_OWNER = 'panchalnihar'
+        REPO_OWNER = 'PanchalNihar'
         REPO_NAME = 'jenkins-pr-automation'
         BASE_BRANCH = 'main'
-        FEATURE_BRANCH = "auto-pr-${BUILD_NUMBER}"
+        FEATURE_BRANCH = "automated-update-${BUILD_NUMBER}"
         
-        // Git user configuration
-        GIT_AUTHOR_NAME = 'Panchal Nihar'
-        GIT_AUTHOR_EMAIL = 'panchalnihar18@gmail.com'
-    }
-    
-    parameters {
-        string(name: 'PR_TITLE', defaultValue: 'Automated PR', description: 'Pull Request Title')
-        text(name: 'PR_BODY', defaultValue: 'This PR was automatically generated', description: 'PR Description')
-        string(name: 'TARGET_BRANCH', defaultValue: 'main', description: 'Target branch for PR')
+        GIT_AUTHOR_NAME = 'Jenkins Bot'
+        GIT_AUTHOR_EMAIL = 'jenkins@yourcompany.com'
+        
+        // Flag to track if PR is needed
+        CHANGES_DETECTED = 'false'
     }
     
     stages {
         stage('Checkout Repository') {
             steps {
                 script {
-                    echo "=== Stage 1: Checking out repository ==="
-                    // Clean workspace and clone repository
+                    echo "=== Checking out repository ==="
                     checkout scm
                     sh """
                         git config user.name "${GIT_AUTHOR_NAME}"
@@ -35,54 +29,147 @@ pipeline {
             }
         }
         
-        stage('Create Feature Branch') {
+        stage('Detect Changes Needed') {
             steps {
                 script {
-                    echo "=== Stage 2: Creating feature branch ${FEATURE_BRANCH} ==="
+                    echo "=== Analyzing if updates are needed ==="
+                    
+                    // Example 1: Check for outdated npm packages
+                    def npmOutdated = sh(
+                        script: 'npm outdated --json || true',
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Example 2: Check if code formatting needed
+                    def formattingNeeded = sh(
+                        script: 'npx prettier --check . || echo "needs-formatting"',
+                        returnStdout: true
+                    ).contains('needs-formatting')
+                    
+                    // Example 3: Check if documentation is outdated
+                    def docsOutdated = sh(
+                        script: 'find src -name "*.js" -newer README.md | wc -l',
+                        returnStdout: true
+                    ).trim().toInteger() > 0
+                    
+                    // Decide if changes are needed
+                    if (npmOutdated || formattingNeeded || docsOutdated) {
+                        env.CHANGES_DETECTED = 'true'
+                        echo "✅ Changes detected! PR will be created."
+                    } else {
+                        env.CHANGES_DETECTED = 'false'
+                        echo "✅ No changes needed. Exiting gracefully."
+                    }
+                }
+            }
+        }
+        
+        stage('Create Feature Branch') {
+            when {
+                expression { env.CHANGES_DETECTED == 'true' }
+            }
+            steps {
+                script {
+                    echo "=== Creating feature branch ${FEATURE_BRANCH} ==="
+                    sh "git checkout -b ${FEATURE_BRANCH}"
+                }
+            }
+        }
+        
+        stage('Apply Automated Updates') {
+            when {
+                expression { env.CHANGES_DETECTED == 'true' }
+            }
+            steps {
+                script {
+                    echo "=== Applying automated updates ==="
+                    
+                    // Update npm dependencies
                     sh """
-                        git checkout -b ${FEATURE_BRANCH}
-                        echo "Branch created at: \$(date)" >> auto-generated.txt
+                        npm update || true
+                    """
+                    
+                    // Auto-format code
+                    sh """
+                        npx prettier --write . || true
+                    """
+                    
+                    // Regenerate documentation
+                    sh """
+                        npm run docs || true
+                    """
+                    
+                    // Update changelog
+                    sh """
+                        echo "\n## Automated Update - \$(date +%Y-%m-%d)" >> CHANGELOG.md
+                        echo "- Dependency updates" >> CHANGELOG.md
+                        echo "- Code formatting applied" >> CHANGELOG.md
+                        echo "- Documentation regenerated" >> CHANGELOG.md
                     """
                 }
             }
         }
         
-        stage('Make Automated Changes') {
+        stage('Verify Changes Exist') {
+            when {
+                expression { env.CHANGES_DETECTED == 'true' }
+            }
             steps {
                 script {
-                    echo "=== Stage 3: Making automated changes ==="
-                    // Example: Update a file with build info
-                    sh """
-                        echo "Build Number: ${BUILD_NUMBER}" >> build-info.txt
-                        echo "Build Date: \$(date)" >> build-info.txt
-                        echo "Branch: ${FEATURE_BRANCH}" >> build-info.txt
-                        
-                        # Add your custom automation logic here
-                        # e.g., code generation, dependency updates, etc.
-                    """
+                    echo "=== Verifying actual file changes ==="
+                    
+                    // Check if git actually has changes
+                    def gitStatus = sh(
+                        script: 'git status --porcelain',
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (gitStatus == '') {
+                        echo "⚠️  No actual file changes after updates. Skipping PR creation."
+                        env.CHANGES_DETECTED = 'false'
+                        // Clean up the branch we created
+                        sh "git checkout ${BASE_BRANCH}"
+                        sh "git branch -D ${FEATURE_BRANCH} || true"
+                    } else {
+                        echo "✅ File changes confirmed: ${gitStatus}"
+                    }
                 }
             }
         }
         
         stage('Commit Changes') {
+            when {
+                expression { env.CHANGES_DETECTED == 'true' }
+            }
             steps {
                 script {
-                    echo "=== Stage 4: Committing changes ==="
+                    echo "=== Committing changes ==="
                     sh """
                         git add .
-                        git commit -m "chore: Automated changes from Jenkins build #${BUILD_NUMBER}" || echo "No changes to commit"
+                        git commit -m "chore: Automated maintenance updates
+                        
+                        - Update dependencies to latest versions
+                        - Apply code formatting standards
+                        - Regenerate documentation
+                        
+                        Generated by Jenkins Build #${BUILD_NUMBER}"
                     """
                 }
             }
         }
         
         stage('Push to GitHub') {
+            when {
+                expression { env.CHANGES_DETECTED == 'true' }
+            }
             steps {
                 script {
-                    echo "=== Stage 5: Pushing to GitHub ==="
-                    withCredentials([usernamePassword(credentialsId: 'github-credentials', 
-                                                      passwordVariable: 'GIT_PASSWORD', 
-                                                      usernameVariable: 'GIT_USERNAME')]) {
+                    echo "=== Pushing to GitHub ==="
+                    withCredentials([usernamePassword(
+                        credentialsId: 'github-credentials',
+                        passwordVariable: 'GIT_PASSWORD',
+                        usernameVariable: 'GIT_USERNAME'
+                    )]) {
                         sh """
                             git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/${REPO_OWNER}/${REPO_NAME}.git ${FEATURE_BRANCH}
                         """
@@ -92,27 +179,51 @@ pipeline {
         }
         
         stage('Create Pull Request') {
+            when {
+                expression { env.CHANGES_DETECTED == 'true' }
+            }
             steps {
                 script {
-                    echo "=== Stage 6: Creating Pull Request ==="
-                    // Use GitHub API to create PR
+                    echo "=== Creating Pull Request ==="
+                    
+                    def prBody = """
+                    ## 🤖 Automated Maintenance Update
+                    
+                    This PR contains automated updates generated by Jenkins.
+                    
+                    ### Changes Include:
+                    - 📦 Dependency updates to latest stable versions
+                    - 💅 Code formatting applied
+                    - 📚 Documentation regenerated
+                    
+                    ### Details:
+                    - **Build Number**: #${BUILD_NUMBER}
+                    - **Generated**: ${new Date()}
+                    - **Branch**: \`${FEATURE_BRANCH}\`
+                    
+                    Please review the changes and merge if everything looks good.
+                    """
+                    
                     def response = sh(script: """
                         curl -X POST \
                         -H "Authorization: token ${GITHUB_TOKEN}" \
                         -H "Accept: application/vnd.github.v3+json" \
                         https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/pulls \
                         -d '{
-                            "title": "${params.PR_TITLE} - Build #${BUILD_NUMBER}",
-                            "body": "${params.PR_BODY}\\n\\nGenerated by Jenkins Build #${BUILD_NUMBER}",
+                            "title": "chore: Automated maintenance updates - Build #${BUILD_NUMBER}",
+                            "body": ${groovy.json.JsonOutput.toJson(prBody)},
                             "head": "${FEATURE_BRANCH}",
-                            "base": "${params.TARGET_BRANCH}"
+                            "base": "${BASE_BRANCH}"
                         }'
                     """, returnStdout: true)
                     
                     echo "GitHub API Response: ${response}"
                     
-                    // Parse PR number from response
-                    def prNumber = sh(script: "echo '${response}' | grep -o '\"number\":[0-9]*' | grep -o '[0-9]*'", returnStdout: true).trim()
+                    def prNumber = sh(
+                        script: "echo '${response}' | grep -o '\"number\":[0-9]*' | grep -o '[0-9]*'",
+                        returnStdout: true
+                    ).trim()
+                    
                     echo "✅ Pull Request #${prNumber} created successfully!"
                 }
             }
@@ -121,12 +232,20 @@ pipeline {
     
     post {
         success {
-            echo '✅ Pipeline completed successfully! PR has been created.'
+            script {
+                if (env.CHANGES_DETECTED == 'true') {
+                    echo '✅ Pipeline completed! PR created successfully.'
+                } else {
+                    echo '✅ Pipeline completed! No updates needed.'
+                }
+            }
         }
         failure {
             echo '❌ Pipeline failed. Check logs for details.'
         }
         cleanup {
+            // Switch back to main branch
+            sh "git checkout ${BASE_BRANCH} || true"
             cleanWs()
         }
     }
